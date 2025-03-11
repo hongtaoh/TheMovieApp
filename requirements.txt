@@ -1,0 +1,5 @@
+fastapi[all]
+sentence_transformers
+qdrant_client
+python-dotenv==1.0.0
+scikit-learn==1.3.2
