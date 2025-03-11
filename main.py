@@ -2,12 +2,12 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-from sentence_transformers import SentenceTransformer
-from sklearn.preprocessing import normalize
 from qdrant_client import QdrantClient
 import os
 from dotenv import load_dotenv
-import numpy as np
+import google.generativeai as genai
+
+from fastapi.staticfiles import StaticFiles
 
 # Load environment variables
 load_dotenv()
@@ -18,6 +18,15 @@ app = FastAPI(
     description="Search for movies using semantic similarity",
     version="1.0.0"
 )
+
+# Serve the static directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Route for favicon.ico
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    from fastapi.responses import FileResponse
+    return FileResponse("static/favicon.ico")
 
 # Add CORS middleware to allow cross-origin requests (important for web clients)
 app.add_middleware(
@@ -31,14 +40,13 @@ app.add_middleware(
 # Initialize Qdrant client
 qdrant_url = os.getenv("QDRANT_MOVIE")
 qdrant_api_key = os.getenv("QDRANT_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
 
 qdrant_client = QdrantClient(
     url=qdrant_url,
     api_key=qdrant_api_key
 )
-
-# Initialize the SentenceTransformer model (load it only once at startup)
-model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Define response model for better documentation and type checking
 class MovieSearchResult(BaseModel):
@@ -50,6 +58,15 @@ class MovieSearchResult(BaseModel):
 class SearchResponse(BaseModel):
     movies: List[MovieSearchResult]
     query: str
+
+def get_gemini_embeddings(texts:List[str]) -> List[List[float]]:
+    embeddings = []
+    for text in texts:
+        response = genai.embed_content(
+            model="models/text-embedding-004", 
+            content=text)
+        embeddings.append(response['embedding'])
+    return embeddings
 
 @app.get("/")
 async def root():
@@ -66,19 +83,17 @@ async def search_movies(
 ):
     try:
         # Encode the query text
-        query_embedding = model.encode([query])
-        normalized_query = normalize(query_embedding, axis=1, norm='l2')
-        
-        # Search in Qdrant
-        results = qdrant_client.search(
-            collection_name='movies',
-            query_vector=normalized_query[0].tolist(),
+        query_embeddings = get_gemini_embeddings([query])
+
+        results = qdrant_client.query_points(
+            collection_name = 'movies_gemini',
+            query=query_embeddings[0],
             limit=top_k
         )
         
         # Format the results
         movies = []
-        for result in results:
+        for result in results.points:
             movies.append(MovieSearchResult(
                 title=result.payload['title'],
                 overview=result.payload['overview'],

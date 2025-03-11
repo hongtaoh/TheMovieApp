@@ -1,5 +1,4 @@
-fastapi[all]
-sentence_transformers
+fastapi[standard]
 qdrant_client
 python-dotenv==1.0.0
-scikit-learn==1.3.2
+google-generativeai
